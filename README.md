@@ -1,8 +1,9 @@
-SEIM deployment with Wazuh manager in a virtualized security enviromentSEIM deployment with Wazuh manager in a virtualized security enviroment
+SEIM deployment with Wazuh manager in a virtualized security enviroment SEIM deployment with Wazuh manager in a virtualized security enviroment 
 
     Project overview:
         This project integrates the Wazuh solution in a virtual infrastructure of multiple VMs, where on of them will be running Wazuh manager and the rest of the end devices will be running Wazug agent 
         this sollution deployment aims to provides for each node these security operations:
+         - Endpoint Security
          - Security configuration assessment (SCA)
          - Log analysis and Threat intelligence
          - Instrution and malware detection
@@ -17,7 +18,7 @@ SEIM deployment with Wazuh manager in a virtualized security enviromentSEIM depl
             - Wazuh Indexer 4.9.2 container
             - Wazuh Dashboard 4.9.2 container
          - Windows Server 2022 VM running Active Directory
-         - Centos 7 VM running Cloudera 
+         - Centos 6.7 VM running Cloudera 
          - Centos 8 VM running Snort NIDS
          - NatNetwork integration in Virtualbox with DHCP implementation
 
