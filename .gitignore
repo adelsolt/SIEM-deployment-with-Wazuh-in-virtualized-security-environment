@@ -1,0 +1,4 @@
+# never commit real credentials
+vm-credentials.txt
+*.txt
+config/filebeat.yml   # has elasticsearch password in plaintext

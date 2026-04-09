@@ -1,184 +1,128 @@
-SEIM deployment with Wazuh manager in a virtualized security enviroment SEIM deployment with Wazuh manager in a virtualized security enviroment 
+# SIEM with Wazuh home lab
 
-    Project overview:
-        This project integrates the Wazuh solution in a virtual infrastructure of multiple VMs, where on of them will be running Wazuh manager and the rest of the end devices will be running Wazug agent 
-        this sollution deployment aims to provides for each node these security operations:
-         - Endpoint Security
-         - Security configuration assessment (SCA)
-         - Log analysis and Threat intelligence
-         - Instrution and malware detection
-         - File integrity monitoring
-         - Vulnerabilities detection
-         - assuring regulatory compliance
-         - System inventory
+Deployed a full Wazuh SIEM stack in a local VirtualBox environment to get hands-on with security monitoring. The goal was to understand how a real SOC setup works log ingestion, alert correlation, vulnerability detection, and active response without touching anything production.
 
-    Infrastructure components:
-         - Debian 12 VM running Docker Containers 
-            - Wazuh Manager 4.9.2 container
-            - Wazuh Indexer 4.9.2 container
-            - Wazuh Dashboard 4.9.2 container
-         - Windows Server 2022 VM running Active Directory
-         - Centos 6.7 VM running Cloudera 
-         - Centos 8 VM running Snort NIDS
-         - NatNetwork integration in Virtualbox with DHCP implementation
+![network topology](docs/screenshots/00-network-topology.png)
 
-    
-    The Wazuh deployment in this infrastructure fucus mainly on Threat detection, prevention and Response capabilities by:
-         - Security analysis and Infrastructure monitoring in real time
-         - using CIS baselines
-         - using Mitre ATT&CK framework
-         - using CVE databases
-         - using non-signature malware detection 
-         - Implementing Automated counter mesures
+## The lab
 
+Four VMs on a VirtualBox NatNetwork with DHCP:
 
-# Wazuh Manager Configuration
+| VM | OS | Role |
+|----|-----|------|
+| wazuh-server | Debian 12 | Runs the 3 Wazuh containers (manager + indexer + dashboard) |
+| ad-server | Windows Server 2022 | Active Directory generates auth events |
+| cloudera-vm | CentOS 6.7 | Cloudera cluster generates a lot of noise, good for testing |
+| snort-vm | CentOS 8 | Snort NIDS forwarding IDS alerts into Wazuh |
 
-First i Deployed the Debian 12 VM running the 3 Wazuh Containers
-Setting up the Wazuh manager configuration that is in /var/ossec/etc/ossec.conf
-The wazuh manager will collect logs from machines with the agent installed or with agentlless machines (connected with ssh) such as Network Hardware.
+Wazuh itself runs as Docker containers on the Debian VM. All other VMs run the Wazuh agent and report back to the manager.
 
-
-This bloc has mostly the default configuration for the agent connections to the manager (i will change later to enhance security posture)
-```
-<!-- Configuration for wazuh-authd -->
-  <auth>
-    <disabled>no</disabled>
-    <port>1515</port>
-    <use_source_ip>no</use_source_ip>
-    <purge>yes</purge>
-    <use_password>no</use_password>
-    <ciphers>HIGH:!ADH:!EXP:!MD5:!RC4:!3DES:!CAMELLIA:@STRENGTH</ciphers>
-    <!-- <ssl_agent_ca></ssl_agent_ca> -->
-    <ssl_verify_host>no</ssl_verify_host>
-    <ssl_manager_cert>etc/sslmanager.cert</ssl_manager_cert>
-    <ssl_manager_key>etc/sslmanager.key</ssl_manager_key>
-    <ssl_auto_negotiate>no</ssl_auto_negotiate>
-  </auth>
-```
-
-
-# Agent connection service
-
-This specific bloc configure service connection
-```
-<ossec_config>
-  <remote>
-    <connection>secure</connection>
-    <port>1514</port>
-    <protocol>tcp</protocol>
-    <queue_size>131072</queue_size>
-  </remote>
-</ossec_config>
-```
-The agents will forward security events to the manager on port 1514
-for the protocol i choose tcp for the connection to make sure that there will be no loss in the communication
-
-# Decoding logs and Evaluating Rules
-
-I tested a logtest provided in the documentation to see how the Wazuh Manager decodes the logs by assigning the compatible decoder (decoder are in /var/ossec/rulesets/decoders/0310-ssh_decoders.xml) to extract intelligence for analysis
-
-Then the manager compares it against a ruleset (rules are stored in /var/ossec/ruleset/rules xml format) and if the rule is met, it evaluates an alert for that specific rule.   
-Only rules above level 2 generates Alerts!
-
-# Integrating Wazuh Indexer
-
-This integration makes a connection between the Wazuh manager and the Wazuh indexer, where the events analysed by the manager will be tranported to the Indexer with Filebeat for storage and archive
-
-# Wazuh Indexer Connector 
-
-The Wazuh manager forwards Vulnerability data to the indexer connector who then forward them to the Wazuh Indexer (JSON format) 
-The connector config is in the Wazuh manager config file as well 
+## How the stack fits together
 
 ```
-<ossec_config>
- <indexer>
-    <enabled>yes</enabled>
-    <hosts>
-      <host>https://127.0.0.1:9200</host>
-    </hosts>
-    <ssl>
-      <certificate_authorities>
-        <ca>/etc/filebeat/certs/root-ca.pem</ca>
-      </certificate_authorities>
-      <certificate>/etc/filebeat/certs/filebeat.pem</certificate>
-      <key>/etc/filebeat/certs/filebeat-key.pem</key>
-    </ssl>
-  </indexer>
-</ossec_config>
+Agents (Windows / CentOS / Snort)
+        │  port 1514/tcp (encrypted)
+        ▼
+  Wazuh Manager   ←── ossec.conf
+        │
+        │  Filebeat (ships alerts in unified2 → JSON)
+        ▼
+  Wazuh Indexer (OpenSearch)   ←── filebeat.yml
+        │
+        ▼
+  Wazuh Dashboard (port 443)
 ```
 
-# The Alert management
+The manager does all the analysis decoding logs, matching rules, triggering active responses. The indexer is just storage. The dashboard is the UI on top.
 
- By default, the alerts are stored in 
-    /var/ossec/logs/alerts/alerts.log 
-     /var/ossec/logs/alerts/alerts.json 
+## Config files
 
-and by default wazuh manager uses filebeat to forward alerts to wazuh indexer (we can also configure it to forward alerts to syslog servers or email systems) 
+`config/ossec.conf` the main manager config. The parts I actually touched:
 
-# Alerts severity 
+- `<alerts>` set `log_alert_level` to 3 so only meaningful events generate alerts (default is too noisy)
+- `<remote>` agents connect on port 1514 over TCP, queue size bumped to 131072 for the Cloudera VM which generates a ton of events
+- `<syscheck>` file integrity monitoring on `/etc`, `/bin`, `/sbin`, `/boot` alerts when anything in those paths changes
+- `<vulnerability-detection>` enabled, updates CVE feed every 60 minutes
+- `<rootcheck>` runs every 12 hours checking for rootkits, suspicious files, open ports
+- `<active-response>` left commented out for now, commands are defined (`firewall-drop`, `host-deny`, `disable-account`) but not wired to rules yet
 
-Alerts are triggered depending on the severity level configured (ranges from 1 to 7)
-I want the SEIM envirment to target most of the events so i setted the minimuim severity level to generate an alert to 2 and minimuim severity level to trigger an email to 10 (range from 1 to 16)
+`config/filebeat.yml` ships alerts from the manager to the indexer. Only alerts are forwarded (`archives: false`) to keep the index size reasonable.
 
-```
-<ossec_config>
-  <alerts>
-    <log_alert_level>2</log_alert_level>
-    <email_alert_level>12</email_alert_level>
-  </alerts>
-</ossec_config>
-```
+> ⚠️ `filebeat.yml` contains the indexer password in plaintext it's in `.gitignore`, don't commit the real version.
 
+## Setup
 
-# Setting up my email as alerts reciepient
+### Deploy Wazuh (Docker)
 
-Wazuh dosn't support SNTP servers authentication like gmail (which my email is from) so i will beusing a server relay by configuring POSTfix with Gmail by Appending these configurations to /etc/postfix.main.cf
-
-```
-relayhost = [smtp.gmail.com]:587
-smtp_sasl_auth_enable = yes
-smtp_sasl_password_maps = hash:/etc/postfix/sasl_passwd
-smtp_sasl_security_options = noanonymous
-smtp_tls_CAfile = /etc/ssl/certs/ca-bundle.crt
-smtp_use_tls = yes
+```bash
+# on the Debian VM
+git clone https://github.com/wazuh/wazuh-docker.git -b v4.9.2
+cd wazuh-docker/single-node
+docker-compose -f generate-indexer-certs.yml run --rm generator
+docker-compose up -d
 ```
 
-Then setting up the sender credentiels in the /etc/postfix/sasl_passwd file, then securing it to be accessible only by root
+Wait a couple minutes for everything to start, then hit `https://<debian-vm-ip>` default creds are `admin / SecretPassword` (change these immediately).
 
-```
-echo [smtp.gmail.com]:587 soltane@gmail.com:TemporaryPassword > /etc/postfix/sasl_passwd
-postmap /etc/postfix/sasl_passwd
-chown root:root /etc/postfix/sasl_passwd /etc/postfix/sasl_passwd.db
-chmod 0600 /etc/postfix/sasl_passwd /etc/postfix/sasl_passwd.db
-```
+Screenshots: `docs/screenshots/01-docker-install.png`, `02-docker-install-2.png`, `03-manager-installed.png`, `04-manager-indexer-startup.png`
 
-# Events logging and storage 
+### Install the config
 
-To avoid events accumulation and disk overwealming i will activate the event logging archieving process that archieves events daily in 
-/var/ossec/logs/archives/archives.log
-
-```
-<ossec_config>
-  <global>
-    <jsonout_output>yes</jsonout_output>
-    <alerts_log>yes</alerts_log>
-    <logall>yes</logall>
-    <logall_json>yes</logall_json
-    ......
-   </global>
-</ossec_config>
+```bash
+# copy ossec.conf into the running manager container
+docker cp config/ossec.conf $(docker ps -qf name=wazuh-manager):/var/ossec/etc/ossec.conf
+docker exec $(docker ps -qf name=wazuh-manager) /var/ossec/bin/wazuh-control restart
 ```
 
+### Deploy agents
 
+On Linux (CentOS/Debian):
 
+```bash
+# get the install command from the dashboard: Agents > Deploy new agent
+# it generates a one-liner with your manager IP baked in, looks like:
+curl -s https://packages.wazuh.com/key/GPG-KEY-WAZUH | gpg --no-default-keyring --keyring gnupg-ring:/usr/share/keyrings/wazuh.gpg --import
+# ... (grab the full command from the dashboard, it varies by OS)
 
+systemctl enable wazuh-agent
+systemctl start wazuh-agent
+```
 
+On Windows download the MSI from the dashboard, run it, enter the manager IP when prompted. Screenshot: `docs/screenshots/08-agent-running-windows.png`
 
+### Validate the manager config
 
+```bash
+docker exec $(docker ps -qf name=wazuh-manager) /var/ossec/bin/wazuh-logtest
+```
 
+Paste a raw log line and it shows you which decoder matched, which rule fired, and what alert level it would generate. Useful for testing before deploying custom rules. Screenshot: `docs/screenshots/10-logtest.png`
 
+## What I got working
 
+- All 4 VMs reporting to the manager and showing up in the dashboard
+- FIM alerts triggering when files change under `/etc` on the Linux VMs  
+- CVE vulnerability scan running against all agents
+- Active Directory authentication events (logon/logoff, failed logins) coming through from the Windows VM
+- Snort IDS alerts showing up in Wazuh alongside the endpoint events
+- SCA (Security Configuration Assessment) running CIS benchmarks against the Linux agents
 
+## What I didn't finish
 
+Active response the commands are defined in `ossec.conf` (`firewall-drop`, `disable-account`) but I didn't wire them to specific rules. Didn't want to accidentally block myself out of a VM. That's next.
 
+Email alerts are configured with a Postfix relay through Gmail but I didn't commit those credentials obviously.
+
+## Screenshots
+
+| File | What it shows |
+|------|--------------|
+| `00-network-topology.png` | VirtualBox NatNetwork layout |
+| `01-02` | Wazuh Docker containers spinning up |
+| `03-04` | Manager and indexer confirmed running |
+| `05` | Agent enrollment config in the manager |
+| `06-07` | Agent install + running on Cloudera VM |
+| `08` | Agent service running on Windows Server |
+| `09` | Filebeat config (default before edits) |
+| `10` | Logtest decoder/rule matching demo |
+| `11-15` | Dashboard alerts, agents, vulnerabilities |
