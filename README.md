@@ -1,4 +1,4 @@
-# SIEM with Wazuh home lab
+# Wazuh SIEM deployment in a Virutalized envirment 
 
 Deployed a full Wazuh SIEM stack in a local VirtualBox environment to get hands-on with security monitoring. The goal was to understand how a real SOC setup works log ingestion, alert correlation, vulnerability detection, and active response without touching anything production.
 
